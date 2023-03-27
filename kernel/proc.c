@@ -410,7 +410,7 @@ wait(uint64 addr, uint64 ptr)
         // if(copyout(p->pagetable, ptr, (char*)pp->exit_msg, 32) < 0){
         //   return -1;
         // }
-        
+
         havekids = 1;
         if(pp->state == ZOMBIE){
           // Found one.
@@ -421,7 +421,7 @@ wait(uint64 addr, uint64 ptr)
             release(&wait_lock);
             return -1;
           }
-          if(copyout(p->pagetable, ptr, (char*)pp->exit_msg, 32) < 0){
+          if(copyout(p->pagetable, ptr, pp->exit_msg, 32) < 0){
             return -1;
           }
           freeproc(pp);
