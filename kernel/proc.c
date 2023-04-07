@@ -26,6 +26,30 @@ extern char trampoline[]; // trampoline.S
 // must be acquired before any p->lock.
 struct spinlock wait_lock;
 
+// Added for Task5
+// gets the minimum value of the accumulators of
+// all the runnable/running processes
+// long long
+// get_min_acc()
+// {
+//   long long min_acc = 0;
+//   struct proc *p;
+
+//   for (p=proc; p < &proc[NPROC]; p++)
+//   {
+//     acquire(&p->lock);
+//     if ((p->state == RUNNING || p->state == RUNNABLE))
+//     {
+//       if (min_acc == 0)
+//         min_acc = p->accumulator;
+//       else if (p->accumulator < min_acc)
+//         min_acc = p->accumulator;
+//     }
+//     release(&p->lock);
+//   }
+//   return min_acc;
+// }
+
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
@@ -42,6 +66,9 @@ proc_mapstacks(pagetable_t kpgtbl)
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }
+
+
+
 
 // initialize the proc table.
 void
@@ -110,6 +137,31 @@ static struct proc*
 allocproc(void)
 {
   struct proc *p;
+  int firstProc = 1;
+
+  // finding min_acc process
+  long long min_acc = 0;
+  for (p=proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if ((p->state == RUNNING || p->state == RUNNABLE))
+    {
+      if (min_acc == 0)
+        min_acc = p->accumulator;
+      else if (p->accumulator < min_acc)
+        min_acc = p->accumulator;
+    }
+    release(&p->lock);
+  }
+
+  // checking if only process unblocked
+  for(p = proc; p < &proc[NPROC]; p++) {
+    acquire(&p->lock);
+    if(p->state == RUNNABLE ||p->state == RUNNING) {
+      firstProc = 0;
+    }
+    release(&p->lock);
+  }
 
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
@@ -124,6 +176,10 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  // 3 lines for Task5
+  p->ps_priority = 5;
+  if(firstProc) p->accumulator = 0;
+  else p->accumulator = min_acc;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -444,13 +500,13 @@ wait(uint64 addr, uint64 ptr)
   }
 }
 
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
+// // Per-CPU process scheduler.
+// // Each CPU calls scheduler() after setting itself up.
+// // Scheduler never returns.  It loops, doing:
+// //  - choose a process to run.
+// //  - swtch to start running that process.
+// //  - eventually that process transfers control
+// //    via swtch back to the scheduler.
 void
 scheduler(void)
 {
@@ -475,6 +531,53 @@ scheduler(void)
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+      }
+      release(&p->lock);
+    }
+  }
+}
+
+void schedulerTask5(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+
+  c->proc = 0;
+  for (;;)
+  {
+    // Avoid deadlock by ensuring that devices can interrupt.
+    intr_on();
+
+    // finding min_acc process
+    long long min_acc = 0; 
+    for (p=proc; p < &proc[NPROC]; p++)
+    {
+      acquire(&p->lock);
+      if ((p->state == RUNNING || p->state == RUNNABLE))
+      {
+        if (min_acc == 0)
+         min_acc = p->accumulator;
+       else if (p->accumulator < min_acc)
+         min_acc = p->accumulator;
+      }
+     release(&p->lock);
+    }
+
+    //finiding the process with min value accumulator
+    for (p = proc; p < &proc[NPROC]; p++)  
+    {
+      acquire(&p->lock);
+      if (p->state == RUNNABLE)
+      {
+        if(p->accumulator == min_acc){
+          p->state = RUNNING;
+          c->proc = p;
+          swtch(&c->context, &p->context);
+
+          // Process is done running for now.
+          // It should have changed its p->state before coming back.
+          c->proc = 0;
+        }
       }
       release(&p->lock);
     }
@@ -578,10 +681,26 @@ wakeup(void *chan)
 {
   struct proc *p;
 
+  // finding min_acc process
+  long long min_acc = 0;
+  for (p=proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if ((p->state == RUNNING || p->state == RUNNABLE))
+    {
+      if (min_acc == 0)
+        min_acc = p->accumulator;
+      else if (p->accumulator < min_acc)
+        min_acc = p->accumulator;
+    }
+    release(&p->lock);
+  }
+
   for(p = proc; p < &proc[NPROC]; p++) {
     if(p != myproc()){
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
+        p->accumulator = min_acc; //added Task5
         p->state = RUNNABLE;
       }
       release(&p->lock);
@@ -597,12 +716,28 @@ kill(int pid)
 {
   struct proc *p;
 
+  // finding min_acc process
+  long long min_acc = 0;
+  for (p=proc; p < &proc[NPROC]; p++)
+  {
+    acquire(&p->lock);
+    if ((p->state == RUNNING || p->state == RUNNABLE))
+    {
+      if (min_acc == 0)
+        min_acc = p->accumulator;
+      else if (p->accumulator < min_acc)
+        min_acc = p->accumulator;
+    }
+    release(&p->lock);
+  }
+
   for(p = proc; p < &proc[NPROC]; p++){
     acquire(&p->lock);
     if(p->pid == pid){
       p->killed = 1;
       if(p->state == SLEEPING){
         // Wake process from sleep().
+        p->accumulator = min_acc; //added Task5
         p->state = RUNNABLE;
       }
       release(&p->lock);
@@ -690,4 +825,9 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+void 
+set_ps_priority(int new_priority){
+  myproc()->ps_priority = new_priority;
 }
